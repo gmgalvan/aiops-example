@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  labels:
+    app.kubernetes.io/name: loadgen
+    app.kubernetes.io/part-of: shop
+    shop.dev/owner: team-sre
+    shop.dev/tier: tooling
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: loadgen
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: loadgen
+    spec:
+      containers:
+        - name: loadgen
+          image: shop/python:1.0.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE
+              value: loadgen
+            - name: OTEL_SDK_DISABLED   # el tráfico sintético no inicia trazas propias
+              value: "true"
+            - name: RPS
+              value: "6"
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 300m, memory: 128Mi }

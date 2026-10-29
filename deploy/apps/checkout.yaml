@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout
+  labels: &labels
+    app.kubernetes.io/name: checkout
+    app.kubernetes.io/part-of: shop
+    shop.dev/owner: team-checkout
+    shop.dev/tier: critical
+  annotations:
+    shop.dev/aliases: "checkout-api,orders"
+    shop.dev/depends-on: "inventory,payment"
+    shop.dev/runbook: "context/runbooks/checkout.md"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: checkout
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      containers:
+        - name: checkout
+          image: shop/python:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVICE
+              value: "checkout"
+            - name: OTEL_SERVICE_NAME
+              value: "checkout"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability:4318"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=shop,deployment.environment=prod,service.owner=team-checkout"
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkout
+  labels:
+    app.kubernetes.io/name: checkout
+spec:
+  selector:
+    app.kubernetes.io/name: checkout
+  ports:
+    - port: 8080
+      targetPort: 8080

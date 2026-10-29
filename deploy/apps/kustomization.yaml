@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: shop
+resources:
+  - namespace.yaml
+  - storefront.yaml
+  - checkout.yaml
+  - inventory.yaml
+  - payment.yaml
+  - payment-provider.yaml
+  - loadgen.yaml
+  - legacy-reports.yaml
+# Cambiar un archivo de configuración genera un ConfigMap con otro hash y un rollout:
+# el cambio queda registrado como despliegue, igual que en GitOps.
+configMapGenerator:
+  - name: payment-config
+    files:
+      - config.json=config/payment-config.json
+  - name: storefront-flags
+    files:
+      - flags.json=config/storefront-flags.json

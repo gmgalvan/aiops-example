@@ -1,0 +1,89 @@
+
+Voy a investigar. Primero leo el contexto y las alertas en paralelo.
+
+[36m▶ ToolSearch[0m [2m{"query": "select:Read,Bash,TodoWrite", "max_results": 3}[0m
+[36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "in_progress", "activeForm": "Leyendo contexto del sistema"}, {"cont[0m
+[36m▶ Read[0m [2m/home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/service-catalog.yaml[0m
+[36m▶ Read[0m [2m/home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/known-issues.md[0m
+[36m▶ Bash[0m [2mls /home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/[0m
+[36m▶ Bash[0m [2mtools/alerts.sh --json[0m
+[36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "completed", "activeForm": "Leyendo contexto del sistema"}, {"conten[0m
+
+Tengo las alertas y el contexto. Ahora consulto métricas de SLO, SLI por cohorte, y los cambios recientes en paralelo.
+
+[36m▶ Bash[0m [2mtools/promql.sh 'slo:checkout:error_ratio:rate5m' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'sli:checkout:good_ratio_by_cohort:rate5m' 30m[0m
+[36m▶ Bash[0m [2mtools/prs.sh[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'payment_provider_timeouts_total' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'payment_provider_retries_total' 30m[0m
+
+La cohorte afectada es claramente `region-a/card`. El PR #15 es muy sospechoso. Voy a investigar el PR, obtener trazas y leer el runbook de payment.
+
+[36m▶ Bash[0m [2mtools/prs.sh pr-15-payment-fail-fast[0m
+[36m▶ Bash[0m [2mtools/traces.sh payment "POST /authorize" 30 5 500[0m
+[36m▶ Bash[0m [2mtools/traces.sh payment "POST /authorize" 30 5[0m
+[36m▶ Read[0m [2m/home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/payment.md[0m
+[36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "completed", "activeForm": "Leyendo contexto del sistema"}, {"conten[0m
+
+Toda la evidencia es consistente. Aquí va el informe.
+
+---
+
+## 1. Impacto
+
+- **SLO afectado:** `checkout-pay` (objetivo 99.9%).
+- **Burn rate actual:** ~138x–146x (error ratio `0.14` / budget `0.001`). La alerta `CheckoutSLOBurnRateFast` disparó a las 12:47 UTC; la `Slow` a las 12:56 UTC.
+- **Cohorte afectada:** exclusivamente **`region-a / card`**. Su good ratio cayó de 1.0 a ~0.42 a partir de las 06:41 UTC (fuente: `sli:checkout:good_ratio_by_cohort:rate5m`).
+- **Cohortes sanas:** `region-b/card`, `region-a/wallet` y `region-b/wallet` permanecen en 1.0.
+- **Inicio:** ~12:41 UTC (coincide con el merge de PR #15 a las 12:41:15 UTC).
+
+## 2. Agrupación de alertas
+
+| Categoría | Alertas |
+|---|---|
+| **Incidente (causa)** | `PaymentGwRetriesHigh`, `StripeClientTimeouts` |
+| **Síntomas derivados** | `CheckoutSLOBurnRateFast`, `CheckoutSLOBurnRateSlow`, `CheckoutApiLatencyHigh`, `StorefrontLatencyHigh`, `PaymentErrorRateHigh` |
+| **Ruido conocido** | `KubeJobFailed` × 3, `KubePodFailed` × 3 (todas de `legacy-reports`, ticket FIN-482, sin impacto en clientes) |
+
+## 3. Hipótesis: timeout de configuración por debajo de la latencia normal del proveedor
+
+**PR #15** (`pr-15-payment-fail-fast`, merge 12:41:15 UTC, autor: `coding-agent` aprobado por `@dev-payments`) cambió el ConfigMap `payment-config` (revisión `cfg-2`) para `region-a/card`:
+
+- `timeout_ms`: **2000 → 400**
+- `max_retries`: 2 → 3
+- `backoff_ms`: 200 → 300
+
+El problema: la latencia normal de `payment-provider` para `region-a/card` es p50 ~420 ms, con máximos de ~600 ms (documentado en `known-issues.md` y `service-catalog.yaml`). Un timeout de 400 ms está **por debajo de la mediana**, por lo que la mayoría de las llamadas hacen timeout y se reintentan.
+
+**Evidencia en trazas:**
+
+| Traza | Intentos | Resultado | Detalle |
+|---|---|---|---|
+| `5c33fd8a...` | 3 | OK (1859 ms) | Los 2 primeros intentos timeout a ~403 ms; el proveedor respondió en 579 ms y 534 ms. El 3ro tuvo suerte (395 ms). |
+| `d6efc532...` | 4 | **ERROR** (2575 ms) | Los 4 intentos timeout; el proveedor respondió entre 466-594 ms, siempre por encima de 400 ms. |
+| `bef35624...` | 4 | **ERROR** (2563 ms) | Mismo patrón. |
+| `d82b759a...` (region-b) | 1 | OK (160 ms) | timeout_ms=2000, sin reintentos. Sana. |
+
+Los reintentos en cascada (hasta 4 intentos × ~400 ms + backoff) generan latencia total de 1.1–2.6 s y errores cuando los 4 intentos fallan. Esto multiplica además el tráfico hacia el proveedor (~3-4x), empeorando la situación.
+
+**Correlación temporal:** los contadores `payment_provider_timeouts_total` y `payment_provider_retries_total` saltan exactamente a las 06:41, minuto del merge del PR. Esto no prueba causalidad por sí solo, pero el mecanismo causal es claro: el timeout (400 ms) < latencia normal del proveedor (~420-600 ms).
+
+## 4. Qué la refutaría
+
+- Si existiera una traza de `region-a/card` con `config.revision=cfg-2` y `timeout_ms=400` donde el proveedor respondiera consistentemente por debajo de 400 ms y aún así hubiera error, la hipótesis sería incorrecta.
+- Si las cohortes no afectadas por el cambio (`region-b`, `wallet`) también mostraran degradación, apuntaría a un problema del proveedor externo y no de la config.
+
+Ninguna de las dos se cumple con los datos actuales.
+
+## 5. Siguiente paso
+
+**Acción:** revertir `payment-config` a la revisión anterior (`cfg-1`) mediante PR, restaurando `timeout_ms=2000`, `max_retries=2`, `backoff_ms=200` para `region-a/card`.
+
+- **Runbook:** `runbooks/payment.md` — "revertir `payment-config` a la revisión anterior mediante PR".
+- **Escalón:** **ejecutar con aprobación** (requiere aprobación de `team-payments`).
+- **Justificación:** la acción es reversible (es un cambio de ConfigMap) y el runbook la marca explícitamente como "ejecutar con aprobación". No escalar réplicas de payment/checkout: el cuello de botella es la latencia del proveedor, no la capacidad de cómputo.
+
+> **Nota:** el PR fue generado por un `coding-agent` y la revisión fue un "LGTM". El timeout de 400 ms se justificó como "la mediana es 420 ms", pero eso significa que ~50% de las respuestas exceden el timeout. Un valor seguro debería estar por encima del p99 de la cohorte (>600 ms), como ya indicaba `known-issues.md`: "No bajar timeouts de esa cohorte por debajo de 1 s".
+
+[36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "completed", "activeForm": "Leyendo contexto del sistema"}, {"conten[0m
+[2m── 19 pasos · 79 s[0m

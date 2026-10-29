@@ -1,0 +1,104 @@
+
+Voy a investigar. Primero leo el contexto y luego las alertas y métricas.
+
+[36m▶ Read[0m [2m../context/service-catalog.yaml[0m
+[36m▶ Read[0m [2m../context/known-issues.md[0m
+[36m▶ Bash[0m [2mls /home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/[0m
+[36m▶ Bash[0m [2mtools/alerts.sh --json[0m
+
+Tengo las alertas. Ahora consulto métricas, trazas y cambios recientes.
+
+[36m▶ Bash[0m [2mtools/promql.sh 'slo:checkout:error_ratio:rate5m' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'sli:checkout:good_ratio_by_cohort:rate5m' 30m[0m
+[36m▶ Bash[0m [2mtools/prs.sh[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'payment_provider_timeouts_total' 30m[0m
+
+Hay dos fases de degradación claras. Voy a profundizar en los PRs y trazas.
+
+[36m▶ Bash[0m [2mtools/prs.sh pr-15-payment-fail-fast[0m
+[36m▶ Bash[0m [2mtools/prs.sh pr-21-recommendations-widget[0m
+[36m▶ Bash[0m [2mtools/prs.sh pr-16-revert-payment-timeout[0m
+[36m▶ Bash[0m [2mtools/traces.sh payment "POST /authorize" 5 3 1000[0m
+[36m▶ Bash[0m [2mtools/traces.sh storefront "POST /api/checkout" 5 3 1000[0m
+[36m▶ Bash[0m [2mtools/traces.sh storefront "POST /api/checkout" 5 3[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'traces_span_metrics_calls_total{service_name="payment",status_code="STATUS_CODE_ERROR"}' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'rate(traces_span_metrics_calls_total{service_name="payment",status_code="STATUS_CODE_ERROR",span_name="stripe-client authorize"}[5m])' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'histogram_quantile(0.95, rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout"}[5m]))'[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'rate(traces_span_metrics_calls_total{service_name="storefront",span_name="POST /api/checkout",status_code="STATUS_CODE_ERROR"}[5m])' 30m[0m
+[36m▶ Read[0m [2m../context/runbooks/payment.md[0m
+[36m▶ Read[0m [2m../context/runbooks/storefront.md[0m
+
+Ahora tengo la imagen completa. Voy a leer el runbook de checkout para completar.
+
+[36m▶ Read[0m [2m../context/runbooks/checkout.md[0m
+
+---
+
+## Informe de incidente — 2026-10-29
+
+### 1. Impacto
+
+**SLO afectado:** `checkout-pay` (objetivo 99.9 %). El burn rate actual es **~244x** (error_ratio 0.244 / umbral 0.001), muy por encima del umbral de page de 14.4x. Fuente: `slo:checkout:error_ratio:rate5m` a las 10:52.
+
+**Cohortes:** Todas están degradadas, pero `region-a/card` es la más afectada (good ratio ~0.43). Las demás cohortes están entre 0.83–0.89. La degradación es **global**, no específica de una región o método de pago. Fuente: `sli:checkout:good_ratio_by_cohort:rate5m`.
+
+**Desde cuándo:** La alerta `CheckoutSLOBurnRateFast` disparó a las **16:48 UTC**. Hubo un incidente previo (alerta Slow desde 13:27 UTC) que fue mitigado pero una nueva degradación comenzó a las ~16:48 UTC.
+
+**Naturaleza:** El SLI falla por **latencia** (p95 > 1 s), no por errores HTTP. La tasa de errores de payment y storefront es 0. El p95 de `POST /api/checkout` en storefront está en ~1540 ms para todas las cohortes (fuente: `histogram_quantile` p95).
+
+---
+
+### 2. Agrupación de alertas
+
+| Alerta | Clasificación | Justificación |
+|---|---|---|
+| **CheckoutSLOBurnRateFast** | **Incidente activo** | Burn rate 244x, page severity. |
+| **CheckoutSLOBurnRateSlow** | Síntoma derivado | Misma violación de SLO, ventana más larga. Se disparó con el primer incidente (13:27 UTC) y sigue activa. |
+| **ContainerCPUHigh** (storefront) | Síntoma derivado | CPU alta en storefront correlaciona con la causa raíz (ver hipótesis). Disparó a 16:49, 1 minuto después del PR #21. |
+| **KubeJobFailed** / **KubePodFailed** (legacy-reports ×3) | **Ruido conocido** | Documentado en `known-issues.md`: CronJob legacy-reports falla siempre (ticket FIN-482). Sin impacto en clientes. |
+
+---
+
+### 3. Hipótesis
+
+**Causa probable: PR #21 — activación del widget de recomendaciones en storefront.**
+
+Evidencia:
+
+1. **Correlación temporal exacta:** PR #21 (`feat(storefront): enable recommendations widget`, flag en `storefront-flags.json`) se fusionó a las **16:47:28 UTC**. La alerta `CheckoutSLOBurnRateFast` disparó a las **16:48:30 UTC** — 62 segundos después. La latencia p95 sube de ~737 ms (10:47) a 1570 ms (10:53) exactamente en ese momento.
+
+2. **La latencia extra está en storefront, no en los servicios downstream.** Trazas recientes muestran:
+   - `trace_id=aa8c3d60`: storefront 1498 ms, pero checkout solo 307 ms, payment 266 ms, payment-provider 261 ms. **Storefront consume ~1191 ms que no pasan al backend.** 
+   - `trace_id=a02b35de`: storefront 1197 ms, checkout 245 ms → gap de ~952 ms en storefront.
+   - En contraste, una traza sana (`2d4f7fda`, durante la ventana de recuperación): storefront 609 ms, checkout 305 ms → gap de solo ~304 ms.
+
+3. **Afecta a todas las cohortes por igual**, lo cual es consistente con un cambio en storefront (que procesa todas las regiones/métodos), y descarta a payment/payment-provider como causa.
+
+4. **ContainerCPUHigh en storefront** disparó a las 16:49 UTC — consistente con un widget nuevo consumiendo CPU adicional.
+
+5. **Payment está sano:** `config.revision=cfg-1` visible en las trazas (el revert de PR #16 está activo), `payment.timeout_ms=2000`, sin errores (`rate(...STATUS_CODE_ERROR...) = 0`), latencia del proveedor normal (179–261 ms).
+
+**Nota:** Correlación temporal no es causalidad. Sin embargo, la evidencia estructural (gap de latencia en storefront, CPU alta, impacto global) apunta fuertemente al mismo componente que cambió.
+
+**Contexto del primer incidente (ya mitigado):** PR #15 bajó el timeout de payment para `region-a/card` de 2000 ms a 400 ms, por debajo de la latencia normal del proveedor (~420 ms p50). Esto provocó timeouts y reintentos en cascada. PR #16 lo revirtió a las 15:37 UTC y la recuperación completó ~16:47 UTC (rollout gradual). Ese incidente ya está resuelto.
+
+---
+
+### 4. Qué refutaría la hipótesis
+
+- Si desactivar el feature flag `recommendations-widget` **no** reduce la latencia p95 de storefront por debajo de 1 s y el burn rate no baja de 1x en ~10 minutos, entonces el widget no es la causa y habría que buscar en el release v1.4.0 (PR #14) u otro factor.
+- Comprobar con: `tools/promql.sh 'histogram_quantile(0.95, rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout"}[5m]))' 15m` tras el rollback del flag.
+
+---
+
+### 5. Siguiente paso
+
+**Acción recomendada:** Revertir el feature flag `recommendations-widget` en `storefront-flags.json` mediante un PR.
+
+- **Runbook:** `runbooks/storefront.md` — *"CPU alta o latencia en todas las cohortes: revisar feature flags en storefront-flags. Apagar un flag es reversible y acotado: puede automatizarse."*
+- **Escalón: ejecutar con aprobación** de `team-web` (dueño de storefront, según `service-catalog.yaml`). Aunque el runbook dice que podría automatizarse, al haber una tormenta de alertas activa es prudente tener confirmación explícita.
+- **Reversibilidad:** Alta. Re-activar el flag restaura el estado anterior.
+- **Dueño para aprobar:** `team-web` (@dev-growth es el autor del PR #21).
+- **Verificación post-rollback:** burn rate 5m < 1x y p95 < 1 s en menos de 10 minutos.
+
+[2m── 23 pasos · 143 s[0m

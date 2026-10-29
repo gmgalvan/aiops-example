@@ -1,0 +1,27 @@
+# HolmesGPT (CNCF sandbox): agente SRE de código abierto.
+# Solo herramientas de lectura: se apagan bash e internet (no mezclar lectura y escritura).
+toolsets:
+  kubernetes/core: { enabled: true }
+  kubernetes/logs: { enabled: true }
+  kubernetes/live-metrics: { enabled: false }
+  bash: { enabled: false }
+  internet: { enabled: false }
+  prometheus/metrics:
+    enabled: true
+    config:
+      prometheus_url: http://127.0.0.1:9095
+  shop/context:
+    description: "Herramientas de solo lectura del sistema shop: trazas, PRs y contexto"
+    tools:
+      - name: shop_traces
+        description: "Busca trazas en Jaeger. Ej.: service=storefront operation='POST /api/checkout' minutes=10 limit=5 min_ms=1000"
+        command: "{{ agent_dir }}/tools/traces.sh {{ service }} '{{ operation }}' {{ minutes }} {{ limit }} {{ min_ms }}"
+      - name: shop_trace_by_id
+        description: "Muestra una traza completa por trace_id"
+        command: "{{ agent_dir }}/tools/traces.sh --id {{ trace_id }}"
+      - name: shop_merged_prs
+        description: "Lista los PRs fusionados recientemente (incluye cambios de configuración)"
+        command: "{{ agent_dir }}/tools/prs.sh"
+      - name: shop_pr_detail
+        description: "Descripción completa de un PR fusionado, por nombre de cambio (ej. pr-15-payment-fail-fast)"
+        command: "{{ agent_dir }}/tools/prs.sh {{ change }}"

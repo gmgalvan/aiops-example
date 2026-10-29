@@ -1,0 +1,30 @@
+▶ Read alerts.json
+▶ Read deploys.txt
+
+## Diagnóstico rápido
+
+Hay **dos incidentes separados**:
+
+### 1. CRÍTICO — Checkout quemando SLO (severity: page)
+- **13:27** — Alerta lenta: consumo sostenido del error budget de `checkout-pay`
+- **15:51** — Alerta rápida: burn rate a **14.4x** (esto es un page, te despertó esto)
+- **15:53** — CPU alta en `storefront` (>80% del límite)
+
+**Correlación clave:** A las **13:22** se desplegó **storefront 1.4.0** a todas las regiones. 5 minutos después empezó el consumo de error budget de checkout. El storefront saturado en CPU probablemente está degradando las llamadas a `checkout-pay` (timeouts, retries, cascading failure).
+
+### 2. RUIDO — CronJobs de `legacy-reports` fallando
+- 3 jobs consecutivos en `BackoffLimitExceeded` entre 16:00 y 16:04
+- Severidad warning, equipo platform. Probablemente un cron roto preexistente, **no relacionado** con el incidente de checkout.
+
+---
+
+## Acciones inmediatas
+
+1. **Rollback de storefront 1.4.0** — Es el sospechoso principal. El deploy precede la degradación por minutos. Revertir a la versión anterior y observar si el burn rate de checkout baja.
+2. **Si no puedes hacer rollback rápido**, escalar CPU limits de storefront como mitigación temporal (o aumentar réplicas).
+3. **Notificar a `team-checkout`** que la degradación probablemente es downstream por storefront, no un bug en checkout-pay.
+4. **Ignorar legacy-reports por ahora** — no es parte del incidente. Crear ticket para platform y seguir después.
+
+**La jugada es clara: rollback storefront primero, preguntas después.**
+
+── 4 pasos · 18 s

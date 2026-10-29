@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory
+  labels: &labels
+    app.kubernetes.io/name: inventory
+    app.kubernetes.io/part-of: shop
+    shop.dev/owner: team-checkout
+    shop.dev/tier: standard
+  annotations:
+    shop.dev/aliases: "stock"
+    shop.dev/depends-on: ""
+    shop.dev/runbook: "context/runbooks/inventory.md"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: inventory
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      containers:
+        - name: inventory
+          image: shop/python:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVICE
+              value: "inventory"
+            - name: OTEL_SERVICE_NAME
+              value: "inventory"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability:4318"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=shop,deployment.environment=prod,service.owner=team-checkout"
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory
+  labels:
+    app.kubernetes.io/name: inventory
+spec:
+  selector:
+    app.kubernetes.io/name: inventory
+  ports:
+    - port: 8080
+      targetPort: 8080

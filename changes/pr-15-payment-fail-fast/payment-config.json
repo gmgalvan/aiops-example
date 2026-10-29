@@ -1,0 +1,9 @@
+{
+  "revision": "cfg-2",
+  "provider": {
+    "default": { "timeout_ms": 2000, "max_retries": 2, "backoff_ms": 200 },
+    "overrides": {
+      "region-a/card": { "timeout_ms": 400, "max_retries": 3, "backoff_ms": 300 }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+
+Voy a investigar. Primero leo el contexto y luego las alertas y métricas.
+
+[36m▶ Read[0m [2m../context/service-catalog.yaml[0m
+[36m▶ Read[0m [2m../context/known-issues.md[0m
+[36m▶ Bash[0m [2mls /home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/[0m
+[36m▶ Bash[0m [2mtools/alerts.sh --json[0m
+
+Bien, tengo las alertas y el contexto. Ahora consulto métricas, cambios recientes y runbooks relevantes.
+
+[36m▶ Bash[0m [2mtools/promql.sh 'slo:checkout:error_ratio:rate5m' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'sli:checkout:good_ratio_by_cohort:rate5m' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'payment_provider_timeouts_total' 30m[0m
+[36m▶ Bash[0m [2mtools/promql.sh 'payment_provider_retries_total' 30m[0m
+[36m▶ Bash[0m [2mtools/prs.sh[0m
+[36m▶ Read[0m [2m../context/runbooks/payment.md[0m
+
+El PR #15 es sospechoso. Voy a ver su detalle y buscar trazas para confirmar.
+
+[36m▶ Bash[0m [2mtools/prs.sh pr-15-payment-fail-fast[0m
+[36m▶ Bash[0m [2mtools/traces.sh payment "POST /authorize" 30 5 500[0m
+
+Tengo toda la evidencia. Aquí va el reporte:
+
+---
+
+## 1. Impacto
+
+- **SLO checkout-pay (objetivo 99.9%):** el `error_ratio` lleva ~30 min en ~0.15, lo que equivale a un **burn rate de ~150x** (`0.15 / 0.001`). La alerta `CheckoutSLOBurnRateFast` (>14.4x) se disparó a las 13:28 UTC.
+- **Cohorte afectada: únicamente `region-a / card`.** Su `good_ratio` está en ~0.42 (58% de peticiones fallan o exceden 1 s). Las demás cohortes (`region-b/card`, `region-a/wallet`, `region-b/wallet`) mantienen ratio = 1.0 sin degradación.
+- **Inicio:** las primeras alertas (`PaymentGwRetriesHigh`, `StripeClientTimeouts`) se dispararon a las 13:26 UTC, ~4 minutos después del merge del PR #15 (13:22 UTC).
+
+## 2. Agrupación de alertas
+
+| Categoría | Alertas |
+|---|---|
+| **Incidente (causa raíz)** | `PaymentGwRetriesHigh`, `StripeClientTimeouts` — reintentos y timeouts en `payment` contra el proveedor. |
+| **Derivadas (síntomas)** | `CheckoutSLOBurnRateFast`, `CheckoutSLOBurnRateSlow`, `PaymentErrorRateHigh`, `CheckoutApiLatencyHigh`, `StorefrontLatencyHigh` — impacto en cascada hacia arriba en el critical path. |
+| **Ruido conocido** | `KubeJobFailed` × 3, `KubePodFailed` × 3 — todos de `legacy-reports`. Problema conocido (ticket FIN-482), sin impacto en clientes. Ignorar. |
+
+## 3. Hipótesis: cambio de configuración del PR #15 establece un timeout inferior a la latencia normal del proveedor
+
+**Evidencia:**
+
+- **PR #15** (`pr-15-payment-fail-fast`, merge 13:22 UTC): redujo `timeout_ms` de 2000 → **400 ms** y subió `max_retries` de 2 → **3** para `region-a/card` en `payment-config.json` (revisión `cfg-2`).
+- **Latencia normal del proveedor** en `region-a/card`: p50 ~420 ms, máx ~600 ms (documentado en `service-catalog.yaml` y `known-issues.md`). Es decir, **el timeout de 400 ms es menor que la mediana del proveedor**.
+- **Trazas lo confirman:**
+  - `trace_id=93ade85a...`: las 4 llamadas al proveedor tardan 468–590 ms, todas exceden el timeout de 400 ms → 4 intentos, todos timeout, fallo total (2565 ms).
+  - `trace_id=c3b36f0c...`: intento 1 timeout (494 ms > 400 ms), intento 2 pasa en 366 ms → éxito, pero total 1136 ms > 1 s SLI.
+  - Todas las trazas muestran `config.revision: cfg-2` y `payment.timeout_ms: 400`.
+- Los contadores `payment_provider_timeouts_total` y `payment_provider_retries_total` crecen de forma sostenida y **solo para `region-a/card`**.
+
+**Mecanismo:** el timeout de 400 ms corta la mayoría de respuestas legítimas del proveedor (p50 = 420 ms). Cada corte genera un reintento (ahora hasta 3), que a su vez también se corta. Esto produce: errores finales cuando los 4 intentos fallan (~58% de las veces), y latencia alta (>1 s) cuando algún reintento logra pasar. Ambos degradan el SLI.
+
+**Correlación ≠ causalidad**, pero aquí hay causalidad mecánica directa: el timeout es numéricamente menor que la latencia p50 del proveedor, y las trazas muestran que cada intento se corta exactamente a 400 ms mientras el proveedor responde en 430–590 ms.
+
+## 4. Qué refutaría la hipótesis
+
+- Encontrar trazas recientes de `region-a/card` con `config.revision` distinta a `cfg-2` que también fallen. Eso indicaría un problema del proveedor independiente del cambio de config.
+- Que la latencia del proveedor en `region-a/card` hubiera bajado a <400 ms recientemente (no es el caso: las trazas muestran 430–590 ms).
+
+## 5. Siguiente paso
+
+**Acción recomendada:** revertir `payment-config.json` a la revisión anterior (`cfg-1`, con `timeout_ms: 2000` y `max_retries: 2` para `region-a/card`), según el runbook de `payment`.
+
+- **Escalón:** ejecutar con aprobación de `team-payments`.
+- **Justificación:** es un cambio de ConfigMap, completamente reversible, y el runbook lo contempla explícitamente. No requiere rollback de imagen.
+- **No hacer:** escalar réplicas de `payment` ni `checkout` — no cambia la latencia del proveedor (runbook).
+- **Nota del runbook:** no bajar timeouts de `region-a/card` por debajo de 1 s (la latencia normal del proveedor llega a 600 ms).
+
+[2m── 14 pasos · 61 s[0m

@@ -1,0 +1,50 @@
+▶ Read alerts.json
+▶ Read deploys.txt
+
+## Diagnóstico
+
+Hay **dos incidentes independientes**:
+
+---
+
+### 1. CRÍTICO — Cadena de pagos degradada (13:26–13:28)
+
+**Causa raíz probable:** El deploy de **storefront 1.4.0** (13:22) precedió por 4 minutos la cascada de alertas.
+
+**Secuencia:**
+1. `StripeClientTimeouts` — Stripe responde lento o no responde.
+2. `PaymentGwRetriesHigh` — payment-gw reintenta contra Stripe, amplificando carga.
+3. `PaymentErrorRateHigh` — errores >1% en el servicio de pagos.
+4. `CheckoutApiLatencyHigh` — checkout se degrada porque depende de pagos.
+5. `StorefrontLatencyHigh` — el frontend sube a p99 >1.5s.
+6. `CheckoutSLOBurnRateFast` (**page**, 14.4x) — estamos quemando error budget rápidamente.
+
+**Hipótesis:** storefront 1.4.0 introdujo un cambio en el flujo de checkout que está generando más llamadas o llamadas malformadas al payment-gw, provocando timeouts contra Stripe y la cascada hacia arriba.
+
+**Acciones inmediatas:**
+1. **Rollback storefront a 1.3.x** — es el único cambio reciente en #deploys y precede a todas las alertas.
+2. Verificar el status page de Stripe (`status.stripe.com`) para descartar incidente externo.
+3. Si Stripe está sano, el rollback debería resolver. Si Stripe está caído, no es culpa del deploy, pero el rollback igual reduce reintentos innecesarios.
+
+---
+
+### 2. BAJA PRIORIDAD — CronJobs `legacy-reports` fallando (14:04–14:08)
+
+Tres ejecuciones consecutivas del CronJob `legacy-reports` en namespace `shop` fallan con `BackoffLimitExceeded`. Esto es **ruido no relacionado** con el incidente de pagos (equipo distinto, hora distinta, sin dependencia).
+
+**Acción:** Crear ticket para `team-platform`. No requiere acción de guardia ahora.
+
+---
+
+### Resumen de acciones
+
+| Prioridad | Acción | Quién |
+|---|---|---|
+| **P0** | Rollback `storefront` a 1.3.x | SRE on-call (tú) |
+| **P0** | Verificar status de Stripe | SRE on-call |
+| **P0** | Notificar en canal de incidentes, avisar a `team-payments` y `team-checkout` | SRE on-call |
+| P3 | Ticket por CronJob `legacy-reports` roto | `team-platform` |
+
+Lo primero: **rollback storefront ya**.
+
+── 4 pasos · 22 s

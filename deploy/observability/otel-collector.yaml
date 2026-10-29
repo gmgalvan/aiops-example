@@ -1,0 +1,143 @@
+# Pipeline de telemetría:
+# collect → normalize/enrich → reduce → route.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc: { endpoint: 0.0.0.0:4317 }
+          http:
+            endpoint: 0.0.0.0:4318
+            cors:
+              allowed_origins: ["http://localhost:8080", "http://127.0.0.1:8080"]
+
+    processors:
+      memory_limiter: { check_interval: 1s, limit_mib: 200 }
+      # Enrich: cada señal sabe de qué pod, deployment y equipo viene.
+      k8sattributes:
+        extract:
+          metadata: [k8s.namespace.name, k8s.deployment.name, k8s.pod.name, k8s.node.name]
+          labels:
+            - { tag_name: service.owner, key: shop.dev/owner, from: pod }
+            - { tag_name: service.tier, key: shop.dev/tier, from: pod }
+        pod_association:
+          - sources: [{ from: connection }]
+      # Reduce: Jaeger guarda trazas con error, lentas, clics reales y un 25 % del resto.
+      tail_sampling:
+        decision_wait: 10s
+        policies:
+          - { name: errors, type: status_code, status_code: { status_codes: [ERROR] } }
+          - { name: slow, type: latency, latency: { threshold_ms: 1000 } }
+          # Los clics reales en la tienda se conservan siempre (los usamos en vivo).
+          - { name: user-clicks, type: string_attribute, string_attribute: { key: ui.action, values: [place_order] } }
+          - { name: baseline, type: probabilistic, probabilistic: { sampling_percentage: 25 } }
+      batch: {}
+
+    connectors:
+      # Métricas RED derivadas de las trazas: trace-first.
+      spanmetrics:
+        histogram:
+          explicit:
+            buckets: [50ms, 100ms, 250ms, 500ms, 750ms, 1s, 1500ms, 2s, 3s, 4s, 6s, 10s]
+        dimensions:
+          - name: payment.region
+          - name: payment.method
+          - name: service.version
+        metrics_flush_interval: 15s
+      forward: {}
+
+    exporters:
+      otlp/jaeger:
+        endpoint: jaeger.observability:4317
+        tls: { insecure: true }
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        resource_to_telemetry_conversion: { enabled: false }
+
+    service:
+      pipelines:
+        # Las métricas se calculan con el 100 % de las trazas; Jaeger recibe la muestra.
+        traces/in:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, batch]
+          exporters: [spanmetrics, forward]
+        traces/sampled:
+          receivers: [forward]
+          processors: [tail_sampling]
+          exporters: [otlp/jaeger]
+        metrics:
+          receivers: [otlp, spanmetrics]
+          processors: [memory_limiter, batch]
+          exporters: [prometheus]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: otel-collector
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: otel-collector
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [replicasets]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: otel-collector
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: otel-collector }
+subjects:
+  - { kind: ServiceAccount, name: otel-collector, namespace: observability }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels: { app.kubernetes.io/name: otel-collector }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: otel-collector }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: otel-collector }
+    spec:
+      serviceAccountName: otel-collector
+      containers:
+        - name: collector
+          image: otel/opentelemetry-collector-contrib:0.111.0
+          args: ["--config=/conf/config.yaml"]
+          ports:
+            - { containerPort: 4317, name: otlp-grpc }
+            - { containerPort: 4318, name: otlp-http }
+            - { containerPort: 8889, name: prom }
+          volumeMounts:
+            - { name: config, mountPath: /conf }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 320Mi }
+      volumes:
+        - name: config
+          configMap: { name: otel-collector }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+spec:
+  type: NodePort
+  selector: { app.kubernetes.io/name: otel-collector }
+  ports:
+    - { name: otlp-grpc, port: 4317 }
+    - { name: otlp-http, port: 4318, nodePort: 30318 }
+    - { name: prom, port: 8889 }

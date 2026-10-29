@@ -1,0 +1,9 @@
+{
+  "revision": "cfg-3",
+  "provider": {
+    "default": { "timeout_ms": 2000, "max_retries": 2, "backoff_ms": 200 },
+    "overrides": {
+      "region-b/wallet": { "timeout_ms": 150, "max_retries": 1, "backoff_ms": 100 }
+    }
+  }
+}

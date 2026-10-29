@@ -1,0 +1,76 @@
+
+[1m[33m── Paso 1/4 · Lo que ve alguien recién despertado: las alertas[0m
+   page     CheckoutSLOBurnRateFast
+   warning  CheckoutApiLatencyHigh
+   ticket   CheckoutSLOBurnRateSlow
+   warning  KubeJobFailed  ×3
+   warning  KubePodFailed  ×3
+   warning  PaymentErrorRateHigh
+   warning  PaymentGwRetriesHigh
+   warning  StorefrontLatencyHigh
+   warning  StripeClientTimeouts
+   [2m13 alertas en alerts.json[0m
+
+[1m[33m── Paso 2/4 · El canal #deploys[0m
+   #deploys  2026-10-29T13:22+00:00  storefront released 1.4.0 to all regions
+   [2mLos cambios de configuración no se anuncian aquí.[0m
+
+[1m[33m── Paso 3/4 · Lo que la IA NO puede ver[0m
+   [31m✗[0m métricas (Prometheus)
+   [31m✗[0m trazas (Jaeger)
+   [31m✗[0m el clúster (kubectl)
+   [31m✗[0m los PRs fusionados
+   [31m✗[0m el catálogo de servicios y sus dueños
+   [31m✗[0m los runbooks y problemas conocidos
+   [32m✓[0m solo puede leer alerts.json y deploys.txt
+
+[1m[33m── Paso 4/4 · Le pregunto[0m
+   [2m«Eres el SRE de guardia. Te acaban de despertar. En alerts.json están las alertas disparadas y en deploys.txt el canal #deploys. ¿Qué está pasando y qué hacemos? Sé breve y concreto.»[0m
+
+[36m▶ Read[0m [2malerts.json[0m
+[36m▶ Read[0m [2mdeploys.txt[0m
+
+## Diagnóstico
+
+Hay **dos incidentes separados**:
+
+---
+
+### 1. CRÍTICO — Cadena de pagos rota (impacto a usuarios)
+
+**Línea temporal** (todo arranca ~13:26 UTC):
+
+| Hora | Alerta | Qué dice |
+|------|--------|----------|
+| 13:26 | `StripeClientTimeouts` | Stripe no responde a tiempo |
+| 13:26 | `PaymentGwRetriesHigh` | payment-gw reintenta contra Stripe |
+| 13:27 | `CheckoutApiLatencyHigh` | checkout-api se degrada (p95 > 1s) |
+| 13:27 | `StorefrontLatencyHigh` | frontend lento (p99 > 1.5s) |
+| 13:27 | `CheckoutSLOBurnRateSlow` | SLO de checkout quemándose |
+| 13:28 | `PaymentErrorRateHigh` | >1% errores en pagos |
+| 13:28 | `CheckoutSLOBurnRateFast` (**page**) | SLO quemándose a 14.4x — la más grave |
+
+**Causa raíz probable:** Stripe está respondiendo lento/con timeouts. Todo lo demás es cascada: payment-gw reintenta, checkout-api se satura esperando, el frontend se degrada. **No** parece relacionado con el deploy de `storefront 1.4.0` (13:22) porque el storefront es frontend y las primeras alertas son del lado de pagos/Stripe.
+
+**Acciones inmediatas:**
+
+1. Revisar [status.stripe.com](https://status.stripe.com) — confirmar si es degradación de Stripe
+2. Si Stripe está degradado: activar **circuit breaker** en `payment-gw` para dejar de reintentar y devolver error rápido al usuario (evita la cascada)
+3. Si Stripe está OK: revisar la config de `stripe-client` — ¿cambió algo? ¿hay un deploy reciente no registrado?
+4. Considerar poner un **banner en checkout** avisando problemas temporales con pagos
+
+---
+
+### 2. BAJO — Jobs `legacy-reports` fallando (sin impacto a usuarios)
+
+Jobs cron `legacy-reports-29888020/22/24` fallando por `BackoffLimitExceeded` desde 13:40. Es ruido — probablemente falla por la misma degradación de la DB o un problema recurrente del job. No es urgente.
+
+**Acción:** Silenciar estas alertas por ahora y crear ticket para `team-platform`.
+
+---
+
+### Resumen ejecutivo
+
+**Stripe con timeouts está cascadeando a todo el flujo de checkout.** Prioridad: verificar estado de Stripe y activar circuit breaker en `payment-gw`. El deploy de storefront 1.4.0 no parece ser la causa. Los jobs de legacy-reports son ruido aparte.
+
+[2m── 4 pasos · 23 s[0m

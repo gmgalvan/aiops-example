@@ -1,0 +1,38 @@
+# Identidad del agente: SOLO LECTURA. Sin secrets, sin verbos de escritura.
+# Regla: no mezclar lectura y escritura en las herramientas del agente.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aiops
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aiops-agent
+  namespace: aiops
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aiops-agent-readonly
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, events, configmaps, namespaces, nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aiops-agent-readonly
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: aiops-agent-readonly }
+subjects:
+  - { kind: ServiceAccount, name: aiops-agent, namespace: aiops }

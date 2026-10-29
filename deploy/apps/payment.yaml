@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment
+  labels: &labels
+    app.kubernetes.io/name: payment
+    app.kubernetes.io/part-of: shop
+    shop.dev/owner: team-payments
+    shop.dev/tier: critical
+  annotations:
+    shop.dev/aliases: "payment-gw,stripe-client,pasarela"
+    shop.dev/depends-on: "payment-provider"
+    shop.dev/runbook: "context/runbooks/payment.md"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payment
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      containers:
+        - name: payment
+          image: shop/python:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SERVICE
+              value: "payment"
+            - name: OTEL_SERVICE_NAME
+              value: "payment"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability:4318"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=shop,deployment.environment=prod,service.owner=team-payments"
+            - name: PROVIDER_URL
+              value: "http://payment-provider:8080"
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          volumeMounts:
+            - name: payment-config
+              mountPath: /etc/payment
+      volumes:
+        - name: payment-config
+          configMap:
+            name: payment-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment
+  labels:
+    app.kubernetes.io/name: payment
+spec:
+  selector:
+    app.kubernetes.io/name: payment
+  ports:
+    - port: 8080
+      targetPort: 8080

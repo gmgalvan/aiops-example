@@ -1,0 +1,10 @@
+# Generados al correr el demo
+changes/merged.log
+changes/pr-*-agent-fix/
+agent/decisions.log
+
+# Credenciales del agente (token de la cuenta de servicio)
+agent/kubeconfig
+
+node_modules/
+__pycache__/

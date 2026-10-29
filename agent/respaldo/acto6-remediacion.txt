@@ -1,0 +1,83 @@
+── Paso 2/5 · El agente investiga (solo lectura)
+▶ Read ../context/service-catalog.yaml
+▶ Read ../context/known-issues.md
+▶ Glob ../context/runbooks
+▶ Glob ../deploy/apps/config
+▶ Bash tools/alerts.sh --json
+▶ Bash tools/promql.sh 'slo:checkout:error_ratio:rate5m' 30m
+▶ Bash tools/promql.sh 'sli:checkout:good_ratio_by_cohort:rate5m' 30m
+▶ Bash tools/prs.sh
+▶ Read ../deploy/apps/config/payment-config.json
+▶ Read ../deploy/apps/config/storefront-flags.json
+▶ Read ../context/runbooks/payment.md
+▶ Read ../context/runbooks/checkout.md
+▶ Bash tools/prs.sh pr-31-payment-wallet-timeout
+▶ Bash tools/promql.sh 'payment_provider_timeouts_total{payment_region="region-b",payment_method="wallet"}' 30m
+▶ Bash tools/traces.sh payment "POST /authorize" 30 5 1
+
+## 1. Impacto
+
+- **SLO afectado:** `checkout-pay` (objetivo 99.9%). Burn rate actual **~104x**.
+- **Cohorte afectada:** exclusivamente **`region-b/wallet`**: cayó de 1.0 a **0.599**. Las demás cohortes en 1.0.
+- **Nota:** hubo una oleada previa que afectó a `region-a/card`, correlacionada con PR #15 y revertida con PR #16. Ya se recuperó.
+
+## 2. Agrupación de alertas
+
+| Alerta | Clasificación |
+|---|---|
+| CheckoutSLOBurnRateFast | Incidente |
+| CheckoutSLOBurnRateSlow | Síntoma derivado (acumulado por ambas oleadas) |
+| PaymentGwRetriesHigh, StripeClientTimeouts, PaymentErrorRateHigh | Síntomas derivados, misma causa |
+| KubeJobFailed / KubePodFailed (legacy-reports) | Ruido conocido (FIN-482) |
+
+## 3. Hipótesis
+
+**El PR #31 redujo `timeout_ms` de `region-b/wallet` de 2000 ms a 150 ms, por debajo de la latencia normal del proveedor (~150–200 ms).**
+
+- Traza `eeba672716530211af087cafb8739002`: 2 intentos, ambos con `timeout` a ~154 y ~156 ms, mientras `payment-provider` tarda ~192 ms.
+- `payment_provider_timeouts_total{region-b,wallet}`: de 0 a 528.
+- Traza sana de comparación (`region-a/wallet`): `timeout_ms: 2000`, 1 intento, 202 ms.
+
+## 4. Qué la refutaría
+
+Que la latencia del proveedor para `region-b/wallet` fuera < 150 ms. Las trazas muestran 146–195 ms.
+
+## 5. Siguiente paso
+
+Revertir el override de `region-b/wallet` en `payment-config.json`. Escalón: ejecutar con aprobación (`team-payments`). Reversible.
+
+── 17 pasos · 112 s
+
+── Paso 3/5 · El PR que propone
+   revert: remove region-b/wallet timeout override from payment-config
+   PR #31 set timeout_ms to 150 ms for region-b/wallet, below the provider's actual latency (~150-200 ms), causing systematic timeouts and SLO burn rate >100x
+   Evidencia:
+   • trace_id=eeba672716530211af087cafb8739002: both attempts timeout at 154-156 ms while provider responds in 192-193 ms, with payment.timeout_ms=150
+   • payment_provider_timeouts_total{region-b,wallet} surged from 0 to 528
+   • sli:checkout:good_ratio_by_cohort{region-b,wallet} dropped from 1.0 to 0.599 while all other cohorts remain at 1.0
+
+--- a/deploy/apps/config/payment-config.json
++++ b/deploy/apps/config/payment-config.json
+@@ -1,9 +1,7 @@
+ {
+-  "revision": "cfg-3",
++  "revision": "cfg-4",
+   "provider": {
+     "default": { "timeout_ms": 2000, "max_retries": 2, "backoff_ms": 200 },
+-    "overrides": {
+-      "region-b/wallet": { "timeout_ms": 150, "max_retries": 1, "backoff_ms": 100 }
+-    }
++    "overrides": {}
+   }
+ }
+
+── Paso 4/5 · Aprobación humana
+   ¿Aplicar este PR? [s/N] s
+# PR #32 · revert: remove region-b/wallet timeout override from payment-config
+
+── Paso 5/5 · Verificación con el SLO
+   timeouts/s= 2.3  burn= 131.8  peor cohorte region-b/wallet=0.49
+   timeouts/s= 0.8  burn= 127.3  peor cohorte region-b/wallet=0.50
+   timeouts/s= 0.0  burn= 109.2  peor cohorte region-b/wallet=0.57
+   timeouts/s= 0.0  burn=  98.9  peor cohorte region-b/wallet=0.61
+   Criterio de éxito: timeouts en 0 ya; burn rate < 1 en unos 5 minutos.

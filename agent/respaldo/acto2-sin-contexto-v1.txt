@@ -1,0 +1,50 @@
+Entrada para el agente: 12 alertas + canal #deploys
+[36m▶ ToolSearch[0m [2m{"query": "select:Read", "max_results": 1}[0m
+[36m▶ Read[0m [2m/tmp/tmp.HyVLycdOKJ/alerts.json[0m
+[36m▶ Read[0m [2m/tmp/tmp.HyVLycdOKJ/deploys.txt[0m
+
+## Diagnóstico
+
+Hay **dos incidentes independientes**:
+
+---
+
+### 1. INCIDENTE PRINCIPAL (severity: page) — Cadena de pagos rota
+
+**Causa raíz probable: Stripe está respondiendo con timeouts.**
+
+La cascada temporal lo deja claro:
+
+| Hora (UTC) | Alerta | Qué indica |
+|---|---|---|
+| 12:41 | `StripeClientTimeouts` | Stripe no responde a tiempo |
+| 12:41 | `PaymentGwRetriesHigh` | payment-gw reintenta contra Stripe |
+| 12:42 | `PaymentErrorRateHigh` | Los reintentos fallan → errores >1% |
+| 12:42 | `CheckoutApiLatencyHigh` | checkout-api se atrasa esperando a payment |
+| 12:41 | `StorefrontLatencyHigh` | El frontend se atrasa esperando a checkout |
+| **12:47** | **`CheckoutSLOBurnRateFast`** (PAGE) | **Quemando error budget a 14.4x — impacto a usuario** |
+
+Esto **no es culpa del deploy** de storefront 1.4.0 (12:40). Es un problema upstream: Stripe está lento/caído y toda la cadena `frontend → checkout-api → payment-gw → stripe-client` se degrada.
+
+**Acciones inmediatas:**
+1. Revisar [status.stripe.com](https://status.stripe.com) para confirmar degradación de Stripe.
+2. Si Stripe confirma incidente → no hay nada que arreglar de nuestro lado, solo mitigar.
+3. **Activar circuit breaker** en `payment-gw` para dejar de reintentar y fallar rápido (fast-fail) — esto alivia la latencia en toda la cadena.
+4. Considerar mostrar un mensaje al usuario tipo "Pagos temporalmente no disponibles" en checkout si el error rate sigue subiendo.
+5. Notificar a `team-payments` y `team-checkout`.
+
+---
+
+### 2. INCIDENTE MENOR (ruido) — Jobs de legacy-reports fallando
+
+3 jobs de `legacy-reports` (29887970, 29887972, 29887974) fallan con `BackoffLimitExceeded` en namespace `shop`. Es un CronJob que viene fallando cada ~2 min.
+
+**Acción:** Ping a `team-platform` para que revisen logs del pod, pero **no es urgente** y no está relacionado con el incidente de pagos. Probablemente un problema preexistente del job legacy.
+
+---
+
+### Resumen ejecutivo para el canal de incidentes
+
+> **Incidente activo: degradación de checkout por timeouts de Stripe.** Error budget quemándose a 14.4x. Stripe parece ser la causa raíz (no el deploy de storefront). Acción: activar circuit breaker en payment-gw y monitorear status de Stripe. Los fallos de legacy-reports son independientes.
+
+[2m── 4 pasos · 26 s[0m

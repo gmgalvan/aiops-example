@@ -1,0 +1,11 @@
+# Convenciones de atributos del sistema shop: un lenguaje compartido para personas y agentes.
+# El check de CI telemetry-contract valida manifests y atributos contra este archivo.
+required_labels: [app.kubernetes.io/name, shop.dev/owner, shop.dev/tier]
+required_annotations: [shop.dev/aliases, shop.dev/runbook]
+attributes:
+  payment.region: { type: string, values: [region-a, region-b], description: "Región del cliente" }
+  payment.method: { type: string, values: [card, wallet], description: "Método de pago" }
+  payment.attempt: { type: int, description: "Número de intento hacia el proveedor" }
+  payment.timeout_ms: { type: int, description: "Timeout configurado para el proveedor" }
+  config.revision: { type: string, description: "Revisión de payment-config activa" }
+  feature_flag.recommendations_widget: { type: bool, description: "Flag del widget de recomendaciones" }

@@ -1,0 +1,12 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: shop
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - { containerPort: 30080, hostPort: 8080, listenAddress: "127.0.0.1" }   # storefront
+      - { containerPort: 30300, hostPort: 3000, listenAddress: "127.0.0.1" }   # grafana
+      - { containerPort: 30090, hostPort: 9095, listenAddress: "127.0.0.1" }   # prometheus
+      - { containerPort: 30093, hostPort: 9093, listenAddress: "127.0.0.1" }   # alertmanager
+      - { containerPort: 30686, hostPort: 16690, listenAddress: "127.0.0.1" }  # jaeger
+      - { containerPort: 30318, hostPort: 4318, listenAddress: "127.0.0.1" }   # otlp http (browser)

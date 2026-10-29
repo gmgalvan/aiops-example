@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  labels: &labels
+    app.kubernetes.io/name: storefront
+    app.kubernetes.io/part-of: shop
+    shop.dev/owner: team-web
+    shop.dev/tier: critical
+  annotations:
+    shop.dev/aliases: "frontend,web"
+    shop.dev/depends-on: "checkout"
+    shop.dev/runbook: "context/runbooks/storefront.md"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: storefront
+  template:
+    metadata:
+      labels: *labels
+    spec:
+      containers:
+        - name: storefront
+          image: shop/storefront:1.3.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: OTEL_SERVICE_NAME
+              value: "storefront"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://otel-collector.observability:4318"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.namespace=shop,deployment.environment=prod,service.owner=team-web"
+            - name: CHECKOUT_URL
+              value: "http://checkout:8080"
+            - name: APP_VERSION
+              value: "1.3.0"
+            - name: BROWSER_OTLP_URL
+              value: "http://localhost:4318/v1/traces"
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          volumeMounts:
+            - name: storefront-flags
+              mountPath: /etc/flags
+      volumes:
+        - name: storefront-flags
+          configMap:
+            name: storefront-flags
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storefront
+  labels:
+    app.kubernetes.io/name: storefront
+spec:
+  selector:
+    app.kubernetes.io/name: storefront
+  ports:
+    - port: 8080
+      targetPort: 8080
+      nodePort: 30080
+  type: NodePort

@@ -1,0 +1,25 @@
+# Reporte heredado que falla desde la migración del Q3: ruido crónico conocido.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: legacy-reports
+  labels:
+    app.kubernetes.io/name: legacy-reports
+    shop.dev/owner: team-finance
+    shop.dev/tier: best-effort
+  annotations:
+    shop.dev/known-issue: "Falla desde la migración del Q3; ticket FIN-482 abierto."
+spec:
+  schedule: "*/2 * * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: report
+              image: busybox:1.36
+              command: ["sh", "-c", "echo 'ERROR: reports-db.legacy.internal: connection refused'; exit 1"]

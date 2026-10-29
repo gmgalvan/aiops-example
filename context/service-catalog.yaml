@@ -1,0 +1,44 @@
+# Mapa explícito del sistema para personas y agentes.
+# Capas: topología, nombres y alias, dueños, cambios, problemas conocidos y negocio.
+system: shop
+slo:
+  name: checkout-pay
+  sli: "Pedidos POST /api/checkout en storefront que terminan sin error y en <= 1 s"
+  objective: 0.999
+  window: 28d
+  business: "Ruta de ingresos. Cada pedido fallido o lento es venta perdida."
+services:
+  storefront:
+    owner: team-web
+    tier: critical
+    aliases: [frontend, web, storefront-web]
+    calls: [checkout]
+    notes: "UI web + BFF en Node. La traza empieza en el navegador (storefront-web)."
+  checkout:
+    owner: team-checkout
+    tier: critical
+    aliases: [checkout-api, orders]
+    calls: [inventory, payment]
+    notes: "Orquesta. Si payment se alenta, se acumulan solicitudes en curso aquí (síntoma, no causa)."
+  inventory:
+    owner: team-checkout
+    tier: standard
+    aliases: [stock]
+    calls: []
+  payment:
+    owner: team-payments
+    tier: critical
+    aliases: [payment-gw, stripe-client, pasarela]
+    calls: [payment-provider]
+    config: "deploy/apps/config/payment-config.json (ConfigMap payment-config). Timeouts y reintentos por región/método."
+    notes: "stripe-client es el nombre del cliente HTTP dentro de payment, no un servicio aparte."
+  payment-provider:
+    owner: external-stripe
+    tier: external
+    aliases: [stripe, psp]
+    notes: "Proveedor externo. Latencia normal: 100-300 ms; region-a/card 250-600 ms (p50 ~420 ms)."
+critical_path: [storefront-web, storefront, checkout, payment, payment-provider]
+change_sources:
+  - "Despliegues de imagen: canal #deploys."
+  - "Cambios de configuración (ConfigMaps): NO se anuncian en #deploys; solo quedan en el PR y en el rollout."
+  - "Historial de PRs: agent/tools/prs.sh (cuando exista el repo: gh pr list --state merged)."

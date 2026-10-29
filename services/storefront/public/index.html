@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bean There Coffee</title>
+  <link rel="icon" href="/img/logo.svg">
+  <script src="/config.js"></script>
+  <style>
+    :root {
+      --bg: #faf7f2; --card: #fff; --ink: #2b2118; --muted: #7a6a5c; --line: #e8dfd4;
+      --accent: #8a4b2a; --accent-ink: #fff; --ok: #2f7d4f; --bad: #b3261e; --soft: #f3ece3;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+    button { font: inherit; cursor: pointer; }
+    header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+    .bar { max-width: 1040px; margin: 0 auto; padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; cursor: pointer; }
+    .brand img { width: 32px; height: 32px; }
+    .spacer { flex: 1; }
+    .cart-btn { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; }
+    .badge { position: absolute; top: -6px; right: -6px; background: var(--accent); color: #fff; border-radius: 999px; font-size: 12px; min-width: 20px; height: 20px; display: grid; place-items: center; padding: 0 5px; }
+    main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
+    .hero { background: var(--soft); border-radius: 14px; padding: 28px; margin-bottom: 24px; }
+    .hero h1 { margin: 0 0 6px; font-size: 28px; }
+    .hero p { margin: 0; color: var(--muted); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 18px; }
+    .product { background: var(--card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+    .product img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+    .product .body { padding: 14px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+    .product .desc { color: var(--muted); font-size: 14px; flex: 1; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .price { font-weight: 700; }
+    .btn { background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px; padding: 9px 14px; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+    .btn.wide { width: 100%; padding: 12px; font-weight: 600; }
+    .recs { margin: 20px 0 0; padding: 12px 16px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); font-size: 14px; }
+    /* Carrito lateral */
+    .overlay { position: fixed; inset: 0; background: rgba(43, 33, 24, .35); display: none; z-index: 10; }
+    .drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(380px, 100%); background: var(--card); z-index: 11; transform: translateX(100%); transition: transform .2s; display: flex; flex-direction: column; }
+    .open .overlay { display: block; } .open .drawer { transform: none; }
+    .drawer h2 { margin: 0; padding: 18px; border-bottom: 1px solid var(--line); font-size: 18px; }
+    .lines { flex: 1; overflow: auto; padding: 8px 18px; }
+    .line { display: grid; grid-template-columns: 56px 1fr auto; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .line img { width: 56px; height: 42px; object-fit: cover; border-radius: 6px; }
+    .qty { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); }
+    .qty button { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--line); background: #fff; }
+    .drawer footer { padding: 18px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+    /* Checkout */
+    .checkout { display: grid; grid-template-columns: 1fr 320px; gap: 24px; align-items: start; }
+    @media (max-width: 760px) { .checkout { grid-template-columns: 1fr; } }
+    .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+    .steps { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+    .step { font-size: 14px; padding: 6px 12px; border-radius: 999px; background: var(--soft); color: var(--muted); }
+    .step.on { background: var(--accent); color: #fff; }
+    .step.done { background: #e4efe7; color: var(--ok); }
+    label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); margin-bottom: 12px; }
+    input, select { font: inherit; color: var(--ink); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .choice { display: flex; gap: 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; cursor: pointer; color: var(--ink); }
+    .choice:has(input:checked) { border-color: var(--accent); background: #fbf5f0; }
+    .summary .line { grid-template-columns: 1fr auto; }
+    .totals { display: grid; gap: 6px; margin-top: 12px; font-size: 15px; }
+    .totals .grand { font-weight: 700; font-size: 18px; border-top: 1px solid var(--line); padding-top: 8px; }
+    .actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 8px; }
+    .processing { text-align: center; padding: 28px 0; }
+    .spinner { width: 42px; height: 42px; border: 4px solid var(--soft); border-top-color: var(--accent); border-radius: 50%; margin: 0 auto 14px; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .timer { font-size: 32px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .result { text-align: center; padding: 12px 0; }
+    .result .icon { font-size: 44px; }
+    .result.ok .icon { color: var(--ok); } .result.bad .icon { color: var(--bad); }
+    .trace { margin-top: 14px; font: 13px ui-monospace, Menlo, monospace; background: var(--soft); border-radius: 8px; padding: 10px; word-break: break-all; }
+    .trace a { color: var(--accent); }
+    .foot { text-align: center; color: var(--muted); font-size: 13px; margin-top: 40px; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <div class="brand" id="home"><img src="/img/logo.svg" alt="">Bean There Coffee</div>
+      <div class="spacer"></div>
+      <button class="cart-btn" id="open-cart">Cart <span class="badge" id="count">0</span></button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Catálogo -->
+    <section id="view-shop">
+      <div class="hero">
+        <h1>Freshly roasted, shipped this week</h1>
+        <p>Free shipping on orders over $50.</p>
+      </div>
+      <div class="grid" id="products"></div>
+      <div class="recs" id="recs" hidden></div>
+    </section>
+
+    <!-- Checkout -->
+    <section id="view-checkout" hidden>
+      <div class="checkout">
+        <div class="panel">
+          <div class="steps">
+            <span class="step" data-step="shipping">1 · Shipping</span>
+            <span class="step" data-step="payment">2 · Payment</span>
+            <span class="step" data-step="review">3 · Review</span>
+          </div>
+
+          <form id="step-shipping">
+            <label>Full name <input value="Ana López" required></label>
+            <label>Email <input type="email" value="ana@example.com" required></label>
+            <label>Address <input value="Av. Constitución 123" required></label>
+            <div class="two">
+              <label>City <input value="Monterrey" required></label>
+              <label>Delivery region
+                <select id="region">
+                  <option value="region-a">West (region-a)</option>
+                  <option value="region-b">East (region-b)</option>
+                </select>
+              </label>
+            </div>
+            <div class="actions"><button type="button" class="btn ghost" data-back>Back to shop</button><button class="btn">Continue to payment</button></div>
+          </form>
+
+          <form id="step-payment" hidden>
+            <label class="choice"><input type="radio" name="method" value="card" checked> Credit or debit card</label>
+            <div id="card-fields">
+              <label>Card number <input value="4242 4242 4242 4242" inputmode="numeric"></label>
+              <div class="two">
+                <label>Expiry <input value="12 / 28"></label>
+                <label>CVC <input value="123"></label>
+              </div>
+            </div>
+            <label class="choice"><input type="radio" name="method" value="wallet"> Digital wallet</label>
+            <div class="actions"><button type="button" class="btn ghost" data-goto="shipping">Back</button><button class="btn">Review order</button></div>
+          </form>
+
+          <div id="step-review" hidden>
+            <p id="review-text"></p>
+            <div class="actions"><button type="button" class="btn ghost" data-goto="payment">Back</button><button class="btn" id="place">Place order</button></div>
+          </div>
+
+          <div id="step-processing" class="processing" hidden>
+            <div class="spinner"></div>
+            <div>Processing payment…</div>
+            <div class="timer" id="timer">0.0 s</div>
+          </div>
+
+          <div id="step-result" class="result" hidden></div>
+        </div>
+
+        <aside class="panel summary">
+          <strong>Order summary</strong>
+          <div id="summary-lines"></div>
+          <div class="totals" id="totals"></div>
+        </aside>
+      </div>
+    </section>
+
+    <div class="foot" id="version"></div>
+  </main>
+
+  <!-- Carrito lateral -->
+  <div id="cart">
+    <div class="overlay" data-close></div>
+    <aside class="drawer">
+      <h2>Your cart</h2>
+      <div class="lines" id="cart-lines"></div>
+      <footer>
+        <div class="row"><span>Subtotal</span><strong id="cart-subtotal">$0</strong></div>
+        <button class="btn wide" id="to-checkout">Checkout</button>
+        <button class="btn ghost wide" data-close>Keep shopping</button>
+      </footer>
+    </aside>
+  </div>
+
+  <script>
+    // ---- Telemetría del navegador ----------------------------------------
+    // Un span por compra, propagado con W3C traceparent y enviado al Collector
+    // como OTLP/JSON: la traza empieza aquí, donde la vive el usuario.
+    //
+    // traceparent = 00-<trace_id de 32 hex>-<span_id de 16 hex>-01
+    //   versión ─┘         └ toda la compra       └ este span    └ muestreada
+    // El servidor lee ese header y sus spans quedan como hijos de este. Así, un
+    // clic en "Place order" y la llamada a payment-provider comparten trace_id.
+    const hex = (bytes) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (b) => b.toString(16).padStart(2, '0')).join('');
+    const nowNs = () => String(BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6)));
+
+    function exportSpan(span) {
+      if (!window.SHOP.otlp) return;
+      const attr = (key, value) => ({ key, value: typeof value === 'number' ? { intValue: value } : { stringValue: String(value) } });
+      fetch(window.SHOP.otlp, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ resourceSpans: [{
+          resource: { attributes: [attr('service.name', 'storefront-web'), attr('service.version', window.SHOP.version), attr('browser.user_agent', navigator.userAgent)] },
+          scopeSpans: [{ scope: { name: 'storefront-web' }, spans: [{
+            traceId: span.traceId, spanId: span.spanId, name: span.name, kind: 3,
+            startTimeUnixNano: span.start, endTimeUnixNano: span.end,
+            attributes: Object.entries(span.attributes).map(([k, v]) => attr(k, v)),
+            status: { code: span.error ? 2 : 1 },
+          }] }],
+        }] }),
+      }).catch(() => {});
+    }
+
+    async function tracedFetch(name, url, options, attributes) {
+      const span = { traceId: hex(16), spanId: hex(8), name, start: nowNs(), attributes };
+      const headers = { ...(options.headers || {}), traceparent: `00-${span.traceId}-${span.spanId}-01` };
+      try {
+        const response = await fetch(url, { ...options, headers });
+        span.attributes['http.response.status_code'] = response.status;
+        span.error = !response.ok;
+        return { response, traceId: span.traceId };
+      } catch (error) {
+        span.error = true;
+        return { response: null, traceId: span.traceId };
+      } finally {
+        span.end = nowNs();
+        exportSpan(span);
+      }
+    }
+
+    // ---- Tienda -----------------------------------------------------------
+    const $ = (id) => document.getElementById(id);
+    const money = (n) => `$${n.toFixed(2)}`;
+    let products = [];
+    const cart = new Map();
+
+    const shippingCost = (subtotal) => (subtotal >= 50 || subtotal === 0 ? 0 : 5);
+    const cartItems = () => [...cart.entries()].map(([sku, qty]) => ({ ...products.find((p) => p.sku === sku), qty }));
+    const subtotal = () => cartItems().reduce((sum, item) => sum + item.price * item.qty, 0);
+
+    function renderCart() {
+      const items = cartItems();
+      $('count').textContent = items.reduce((n, item) => n + item.qty, 0);
+      $('cart-lines').innerHTML = items.length ? items.map((item) => `
+        <div class="line">
+          <img src="${item.image}" alt="">
+          <div><div>${item.name}</div>
+            <div class="qty"><button data-dec="${item.sku}">−</button>${item.qty}<button data-inc="${item.sku}">+</button></div></div>
+          <strong>${money(item.price * item.qty)}</strong>
+        </div>`).join('') : '<p style="color:var(--muted)">Your cart is empty.</p>';
+      $('cart-subtotal').textContent = money(subtotal());
+      $('to-checkout').disabled = !items.length;
+    }
+
+    function renderSummary() {
+      const sub = subtotal(), ship = shippingCost(sub);
+      $('summary-lines').innerHTML = cartItems().map((item) =>
+        `<div class="line"><span>${item.qty} × ${item.name}</span><span>${money(item.price * item.qty)}</span></div>`).join('');
+      $('totals').innerHTML = `
+        <div class="row"><span>Subtotal</span><span>${money(sub)}</span></div>
+        <div class="row"><span>Shipping</span><span>${ship ? money(ship) : 'Free'}</span></div>
+        <div class="row grand"><span>Total</span><span>${money(sub + ship)}</span></div>`;
+    }
+
+    function add(sku) { cart.set(sku, (cart.get(sku) || 0) + 1); renderCart(); document.body.classList.add('open'); }
+
+    fetch('/api/products').then((r) => r.json()).then((data) => {
+      products = data.products;
+      $('products').innerHTML = products.map((p) => `
+        <article class="product">
+          <img src="${p.image}" alt="${p.name}">
+          <div class="body">
+            <strong>${p.name}</strong>
+            <span class="desc">${p.description}</span>
+            <div class="row"><span class="price">${money(p.price)}</span><button class="btn" data-add="${p.sku}">Add to cart</button></div>
+          </div>
+        </article>`).join('');
+      if (data.recommendations.length) {
+        $('recs').hidden = false;
+        $('recs').textContent = `Recommended for you: ${data.recommendations.map((p) => p.name).join(' · ')}`;
+      }
+      renderCart();
+    });
+
+    // ---- Navegación -------------------------------------------------------
+    function show(view) {
+      $('view-shop').hidden = view !== 'shop';
+      $('view-checkout').hidden = view !== 'checkout';
+      document.body.classList.remove('open');
+      window.scrollTo(0, 0);
+    }
+
+    function goto(step) {
+      for (const id of ['shipping', 'payment', 'review', 'processing', 'result']) $(`step-${id}`).hidden = id !== step;
+      const order = ['shipping', 'payment', 'review'];
+      document.querySelectorAll('.step').forEach((el) => {
+        const i = order.indexOf(el.dataset.step), current = order.indexOf(step);
+        el.className = 'step' + (i === current ? ' on' : i < current || current === -1 ? ' done' : '');
+      });
+      if (step === 'review') {
+        const method = document.querySelector('input[name=method]:checked').value;
+        const region = $('region');
+        $('review-text').textContent = `Shipping to ${region.selectedOptions[0].text}, paying with ${method === 'card' ? 'card ending in 4242' : 'digital wallet'}.`;
+      }
+    }
+
+    document.addEventListener('click', (event) => {
+      const t = event.target;
+      if (t.dataset.add) add(t.dataset.add);
+      if (t.dataset.inc) { cart.set(t.dataset.inc, cart.get(t.dataset.inc) + 1); renderCart(); }
+      if (t.dataset.dec) { const q = cart.get(t.dataset.dec) - 1; q ? cart.set(t.dataset.dec, q) : cart.delete(t.dataset.dec); renderCart(); }
+      if ('close' in t.dataset) document.body.classList.remove('open');
+      if ('back' in t.dataset) show('shop');
+      if (t.dataset.goto) goto(t.dataset.goto);
+    });
+    $('open-cart').onclick = () => document.body.classList.add('open');
+    $('home').onclick = () => show('shop');
+    $('to-checkout').onclick = () => { renderSummary(); goto('shipping'); show('checkout'); };
+    $('step-shipping').onsubmit = (e) => { e.preventDefault(); goto('payment'); };
+    $('step-payment').onsubmit = (e) => { e.preventDefault(); goto('review'); };
+    document.querySelectorAll('input[name=method]').forEach((r) => r.onchange = () => { $('card-fields').hidden = r.value !== 'card' || !r.checked; });
+
+    // ---- Pago ---------------------------------------------------------------
+    $('place').onclick = async () => {
+      const region = $('region').value;
+      const method = document.querySelector('input[name=method]:checked').value;
+      const items = cartItems().flatMap((item) => Array(item.qty).fill(item.sku));
+      goto('processing');
+      const started = performance.now();
+      const tick = setInterval(() => { $('timer').textContent = `${((performance.now() - started) / 1000).toFixed(1)} s`; }, 100);
+      const { response, traceId } = await tracedFetch('click Place order', '/api/checkout', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ region, method, items }),
+      }, { 'payment.region': region, 'payment.method': method, 'ui.action': 'place_order', 'cart.items': items.length });
+      clearInterval(tick);
+      const seconds = ((performance.now() - started) / 1000).toFixed(2);
+      const ok = response && response.ok;
+      const jaeger = `http://localhost:16690/trace/${traceId}`;
+      $('step-result').className = `result ${ok ? 'ok' : 'bad'}`;
+      $('step-result').innerHTML = ok ? `
+          <div class="icon">✓</div>
+          <h2>Thank you, your order is confirmed</h2>
+          <p>Order #BT-${traceId.slice(0, 6).toUpperCase()} · payment took <strong>${seconds} s</strong></p>
+          <button class="btn" data-back>Continue shopping</button>
+          <div class="trace">trace_id ${traceId}<br><a href="${jaeger}" target="_blank">Open in Jaeger</a></div>`
+        : `
+          <div class="icon">✕</div>
+          <h2>We couldn't process your payment</h2>
+          <p>After ${seconds} s the payment provider did not confirm. You have not been charged.</p>
+          <button class="btn" data-goto="review">Try again</button>
+          <div class="trace">trace_id ${traceId}<br><a href="${jaeger}" target="_blank">Open in Jaeger</a></div>`;
+      goto('result');
+      if (ok) { cart.clear(); renderCart(); }
+    };
+
+    $('version').textContent = `storefront ${window.SHOP.version}`;
+  </script>
+</body>
+</html>

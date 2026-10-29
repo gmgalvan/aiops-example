@@ -1,0 +1,92 @@
+# SLO de checkout: 99.9 % de los pedidos terminan bien y en 1 s o menos,
+# medido en el span SERVER de storefront (lo que vive el usuario).
+# Burn rate multiventana: rápido (pagea) y lento (ticket).
+groups:
+  - name: slo-checkout
+    interval: 15s
+    rules:
+      - record: sli:checkout:total:rate5m
+        expr: sum(rate(traces_span_metrics_calls_total{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER"}[5m]))
+      - record: sli:checkout:good:rate5m
+        expr: sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER",status_code!="STATUS_CODE_ERROR",le="1000"}[5m]))
+      - record: slo:checkout:error_ratio:rate5m
+        expr: 1 - sli:checkout:good:rate5m / sli:checkout:total:rate5m
+      - record: slo:checkout:error_ratio:rate30m
+        expr: 1 - sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER",status_code!="STATUS_CODE_ERROR",le="1000"}[30m])) / sum(rate(traces_span_metrics_calls_total{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER"}[30m]))
+      - record: slo:checkout:error_ratio:rate1h
+        expr: 1 - sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER",status_code!="STATUS_CODE_ERROR",le="1000"}[1h])) / sum(rate(traces_span_metrics_calls_total{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER"}[1h]))
+      - record: slo:checkout:error_ratio:rate6h
+        expr: 1 - sum(rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER",status_code!="STATUS_CODE_ERROR",le="1000"}[6h])) / sum(rate(traces_span_metrics_calls_total{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER"}[6h]))
+      # SLI por cohorte, para el dashboard y la auditoría en vivo.
+      - record: sli:checkout:good_ratio_by_cohort:rate5m
+        expr: |
+          sum by (payment_region, payment_method) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER",status_code!="STATUS_CODE_ERROR",le="1000"}[5m]))
+          / sum by (payment_region, payment_method) (rate(traces_span_metrics_calls_total{service_name="storefront",span_name="POST /api/checkout",span_kind="SPAN_KIND_SERVER"}[5m]))
+
+  - name: slo-alerts
+    rules:
+      - alert: CheckoutSLOBurnRateFast
+        expr: slo:checkout:error_ratio:rate1h > (14.4 * 0.001) and slo:checkout:error_ratio:rate5m > (14.4 * 0.001)
+        for: 1m
+        labels: { severity: page, service: checkout-pay, team: team-checkout }
+        annotations:
+          summary: "Checkout está consumiendo el presupuesto de error a más de 14.4x"
+          runbook: context/runbooks/checkout.md
+      - alert: CheckoutSLOBurnRateSlow
+        expr: slo:checkout:error_ratio:rate6h > (6 * 0.001) and slo:checkout:error_ratio:rate30m > (6 * 0.001)
+        for: 2m
+        labels: { severity: ticket, service: checkout-pay, team: team-checkout }
+        annotations:
+          summary: "Consumo sostenido del presupuesto de error de checkout"
+
+  # Alertas "de toda la vida": umbrales estáticos por componente.
+  # Cada una tiene sentido sola; juntas forman la tormenta del acto 1.
+  - name: component-alerts
+    rules:
+      - alert: StorefrontLatencyHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="storefront",span_kind="SPAN_KIND_SERVER"}[2m]))) > 1500
+        for: 1m
+        labels: { severity: warning, service: frontend, team: team-web }
+        annotations: { summary: "p99 del frontend arriba de 1.5 s" }
+      - alert: CheckoutApiLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="checkout",span_kind="SPAN_KIND_SERVER"}[2m]))) > 1000
+        for: 1m
+        labels: { severity: warning, service: checkout-api, team: team-checkout }
+        annotations: { summary: "p95 de checkout-api arriba de 1 s" }
+      - alert: CheckoutInflightRequestsHigh
+        expr: avg_over_time(sum(checkout_inflight_requests)[2m:15s]) > 3
+        for: 1m
+        labels: { severity: warning, service: orders, team: team-checkout }
+        annotations: { summary: "Muchas solicitudes de checkout en curso: posible saturación" }
+      - alert: PaymentGwRetriesHigh
+        expr: sum(rate(payment_provider_retries_total[2m])) > 0.1
+        for: 1m
+        labels: { severity: warning, service: payment-gw, team: team-payments }
+        annotations: { summary: "payment-gw está reintentando contra el proveedor" }
+      - alert: StripeClientTimeouts
+        expr: sum(rate(payment_provider_timeouts_total[2m])) > 0.1
+        for: 1m
+        labels: { severity: warning, service: stripe-client, team: team-payments }
+        annotations: { summary: "stripe-client recibe timeouts" }
+      - alert: PaymentErrorRateHigh
+        expr: |
+          sum(rate(traces_span_metrics_calls_total{service_name="payment",span_kind="SPAN_KIND_SERVER",status_code="STATUS_CODE_ERROR"}[2m]))
+          / sum(rate(traces_span_metrics_calls_total{service_name="payment",span_kind="SPAN_KIND_SERVER"}[2m])) > 0.01
+        for: 1m
+        labels: { severity: warning, service: payment, team: team-payments }
+        annotations: { summary: "Más de 1 % de errores en payment" }
+      - alert: ContainerCPUHigh
+        expr: |
+          sum by (namespace, pod, container) (rate(container_cpu_usage_seconds_total{namespace="shop",container!=""}[2m]))
+          / sum by (namespace, pod, container) (kube_pod_container_resource_limits{namespace="shop",resource="cpu"}) > 0.8
+        for: 1m
+        labels: { severity: warning, team: platform }
+        annotations: { summary: "Contenedor arriba de 80 % de su límite de CPU" }
+      - alert: KubeJobFailed
+        expr: kube_job_status_failed{namespace="shop"} > 0
+        labels: { severity: warning, team: platform }
+        annotations: { summary: "Job {{ $labels.job_name }} falló" }
+      - alert: KubePodFailed
+        expr: sum by (namespace, pod) (kube_pod_status_phase{namespace="shop",phase="Failed"}) > 0
+        labels: { severity: warning, team: platform }
+        annotations: { summary: "Pod {{ $labels.pod }} en estado Failed" }
