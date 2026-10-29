@@ -3,9 +3,9 @@ Voy a investigar. Primero leo el contexto y las alertas en paralelo.
 
 [36m▶ ToolSearch[0m [2m{"query": "select:Read,Bash,TodoWrite", "max_results": 3}[0m
 [36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "in_progress", "activeForm": "Leyendo contexto del sistema"}, {"cont[0m
-[36m▶ Read[0m [2m/home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/service-catalog.yaml[0m
-[36m▶ Read[0m [2m/home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/known-issues.md[0m
-[36m▶ Bash[0m [2mls /home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/[0m
+[36m▶ Read[0m [2m../context/service-catalog.yaml[0m
+[36m▶ Read[0m [2m../context/known-issues.md[0m
+[36m▶ Bash[0m [2mls ../context/runbooks/[0m
 [36m▶ Bash[0m [2mtools/alerts.sh --json[0m
 [36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "completed", "activeForm": "Leyendo contexto del sistema"}, {"conten[0m
 
@@ -22,7 +22,7 @@ La cohorte afectada es claramente `region-a/card`. El PR #15 es muy sospechoso. 
 [36m▶ Bash[0m [2mtools/prs.sh pr-15-payment-fail-fast[0m
 [36m▶ Bash[0m [2mtools/traces.sh payment "POST /authorize" 30 5 500[0m
 [36m▶ Bash[0m [2mtools/traces.sh payment "POST /authorize" 30 5[0m
-[36m▶ Read[0m [2m/home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/payment.md[0m
+[36m▶ Read[0m [2m../context/runbooks/payment.md[0m
 [36m▶ TodoWrite[0m [2m{"todos": [{"content": "Leer contexto (service-catalog, known-issues, runbooks)", "status": "completed", "activeForm": "Leyendo contexto del sistema"}, {"conten[0m
 
 Toda la evidencia es consistente. Aquí va el informe.

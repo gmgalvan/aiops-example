@@ -3,7 +3,7 @@ Voy a investigar. Primero leo el contexto y luego las alertas y métricas.
 
 [36m▶ Read[0m [2m../context/service-catalog.yaml[0m
 [36m▶ Read[0m [2m../context/known-issues.md[0m
-[36m▶ Bash[0m [2mls /home/gmgalvan/devopsdrivenai/devopsdrivenai/07-aiops-en-practica/shop-aiops-demo/context/runbooks/[0m
+[36m▶ Bash[0m [2mls ../context/runbooks/[0m
 [36m▶ Bash[0m [2mtools/alerts.sh --json[0m
 
 Bien, tengo las alertas y el contexto. Ahora consulto métricas, cambios recientes y runbooks relevantes.
