@@ -1,5 +1,5 @@
 {
-  "revision": "cfg-4",
+  "revision": "cfg-1",
   "provider": {
     "default": { "timeout_ms": 2000, "max_retries": 2, "backoff_ms": 200 },
     "overrides": {}

@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: storefront
-          image: shop/storefront:1.4.0
+          image: shop/storefront:1.3.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
@@ -36,7 +36,7 @@ spec:
             - name: CHECKOUT_URL
               value: "http://checkout:8080"
             - name: APP_VERSION
-              value: "1.4.0"
+              value: "1.3.0"
             - name: BROWSER_OTLP_URL
               value: "http://localhost:4318/v1/traces"
           readinessProbe:
